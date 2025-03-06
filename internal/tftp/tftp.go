@@ -8,20 +8,20 @@ import (
 	"os"
 )
 
-type TFTP struct {
-	blocks   [][]byte
-	blockNo  int
-	blockLen int
+type tftp struct {
+	blocks  [][]byte
+	blockNo int
 }
 
-const UdpMax = 65536
+const udpMax = 65536
 const blockMax = 65536
-const OpcRRQ = 1
-const OpcDATA = 3
-const OpcERROR = 5
-const FileNotFound = 1
-const Accessviolation = 2
-const IllegalTFTPOperation = 4
+const opcRRQ = 1
+const opcDATA = 3
+const opcACK = 4
+const opcERROR = 5
+const fileNotFound = 1
+const accessviolation = 2
+const illegalTFTPOperation = 4
 
 var logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 var host string
@@ -46,7 +46,7 @@ func Listen(address string) error {
 func listen(conn net.PacketConn) {
 	defer conn.Close()
 
-	udpBuffer := make([]byte, UdpMax)
+	udpBuffer := make([]byte, udpMax)
 	for {
 		_, addr, err := conn.ReadFrom(udpBuffer)
 		if err != nil {
@@ -56,15 +56,15 @@ func listen(conn net.PacketConn) {
 
 		if err := checkRRQ(udpBuffer); err != nil {
 			logger.Error("Illegal TFTP operation form "+addr.String(), "module", "TFTP")
-			response := ERROR(IllegalTFTPOperation)
+			response := newError(illegalTFTPOperation)
 			conn.WriteTo(response, addr)
 			continue
 		}
 
-		tftp, err := RRQ(udpBuffer)
+		tftp, err := rrq(udpBuffer)
 		if err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
-			response := ERROR(FileNotFound)
+			response := newError(fileNotFound)
 			conn.WriteTo(response, addr)
 			continue
 		}
@@ -79,37 +79,37 @@ func listen(conn net.PacketConn) {
 	}
 }
 
-func handleTFTP(conn net.PacketConn, addr net.Addr, tftp *TFTP) {
+func handleTFTP(conn net.PacketConn, addr net.Addr, tftp *tftp) {
 	defer conn.Close()
 
-	response, err := tftp.DATA()
+	response, err := tftp.data()
 	if err != nil {
 		logger.Error(err.Error(), "module", "TFTP")
-		response := ERROR(Accessviolation)
+		response := newError(accessviolation)
 		conn.WriteTo(response, addr)
 		return
 	}
 	conn.WriteTo(response, addr)
 
-	udpBuffer := make([]byte, UdpMax)
+	udpBuffer := make([]byte, udpMax)
 	for {
 		_, ackAddr, err := conn.ReadFrom(udpBuffer)
 		if err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
 			continue
 		}
-		if ackAddr.String() != addr.String() {
+		if err = checkAddr(ackAddr, addr); err != nil {
 			continue
 		}
-		if err = tftp.ACK(udpBuffer); err != nil {
+		if err = tftp.ack(udpBuffer); err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
 			continue
 		}
 
-		response, err := tftp.DATA()
+		response, err := tftp.data()
 		if err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
-			response := ERROR(Accessviolation)
+			response := newError(accessviolation)
 			conn.WriteTo(response, addr)
 			return
 		}
@@ -117,14 +117,24 @@ func handleTFTP(conn net.PacketConn, addr net.Addr, tftp *TFTP) {
 	}
 }
 
+func checkAddr(a net.Addr, b net.Addr) error {
+	if a.String() != b.String() {
+		return errors.New("invalid client")
+	}
+	return nil
+}
+
 func checkRRQ(p []byte) error {
-	if p[1] != OpcRRQ {
+	if len(p) < 2 {
+		return errors.New("invalid packet")
+	}
+	if p[1] != opcRRQ {
 		return errors.New("opc is not RRQ")
 	}
 	return nil
 }
 
-func RRQ(p []byte) (*TFTP, error) {
+func rrq(p []byte) (*tftp, error) {
 	filename := bytes.Split(p[2:], []byte{0})[0]
 	path := srvDir + "/" + string(filename)
 	fp, err := os.Open(path)
@@ -148,10 +158,17 @@ func RRQ(p []byte) (*TFTP, error) {
 		blocks[i] = block
 	}
 
-	return &TFTP{blocks, 1, blockLen}, nil
+	return &tftp{blocks, 1}, nil
 }
 
-func (t *TFTP) ACK(p []byte) error {
+func (t *tftp) ack(p []byte) error {
+	if len(p) < 4 {
+		return errors.New("invalid packet")
+	}
+	if p[1] != opcACK {
+		return errors.New("opc is not RRQ")
+	}
+
 	ack := (int(p[2]) << 8) + int(p[3])
 	if ack == t.blockNo {
 		t.blockNo = ack + 1
@@ -161,26 +178,13 @@ func (t *TFTP) ACK(p []byte) error {
 	return nil
 }
 
-func (t *TFTP) DATA() ([]byte, error) {
-	block := make([]byte, t.blockLen)
-	n, err := t.Read(block)
-	if err != nil {
-		return nil, err
-	}
-	if n < t.blockLen {
-		block = block[:n]
-	}
-	head := []byte{0, OpcDATA, byte(t.blockNo >> 8), byte(t.blockNo)}
+func (t *tftp) data() ([]byte, error) {
+	block := t.blocks[t.blockNo-1]
+	head := []byte{0, opcDATA, byte(t.blockNo >> 8), byte(t.blockNo)}
 	data := append(head, block...)
 	return data, nil
 }
 
-func (t *TFTP) Read(p []byte) (n int, err error) {
-	block := t.blocks[t.blockNo-1]
-	copy(p, block)
-	return len(block), nil
-}
-
-func ERROR(code byte) []byte {
-	return []byte{0, OpcERROR, 0, code, 0}
+func newError(code byte) []byte {
+	return []byte{0, opcERROR, 0, code, 0}
 }
