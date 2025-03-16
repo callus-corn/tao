@@ -28,6 +28,7 @@ const fileNotFound = 1
 const accessviolation = 2
 const illegalTFTPOperation = 4
 const requestHasBeenDeniend = 8
+const optBlocksize = "blksize"
 
 var logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 var host string
@@ -179,41 +180,21 @@ func rrq(p []byte) (*tftp, error) {
 	option := make(map[string]string)
 	options := bytes.Split(p[2:], []byte{0})
 	for i := range options {
-		if strings.ToLower(string(options[i])) == "blksize" {
-			option["blksize"] = string(options[i+1])
+		if strings.ToLower(string(options[i])) == optBlocksize {
+			option[optBlocksize] = string(options[i+1])
 		}
 	}
+
+	blocks := make([][]byte, blockMax)
 
 	blockNo := 1
 	if len(option) > 0 {
 		blockNo = 0
 	}
 
-	blockSize := 512
-	for k, v := range option {
-		if k == "blksize" {
-			blockSize, err = strconv.Atoi(v)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	blocks := make([][]byte, blockMax)
-	for i := 1; i < blockMax; i++ {
-		block := make([]byte, blockSize)
-		n, err := file.Read(block)
-		if n < blockSize {
-			blocks[i] = block[:n]
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		blocks[i] = block
-	}
-
-	return &tftp{blocks, blockNo, file, option}, nil
+	tftp := &tftp{blocks, blockNo, file, option}
+	tftp.loadFile()
+	return tftp, nil
 }
 
 func (t *tftp) ack(p []byte) error {
@@ -225,35 +206,13 @@ func (t *tftp) ack(p []byte) error {
 	}
 
 	ack := (int(p[2]) << 8) + int(p[3])
-	if ack == t.blockNo {
-		t.blockNo = ack + 1
-	} else {
+	if ack != t.blockNo {
 		return errors.New("invalid ACK number")
 	}
+	t.blockNo = ack + 1
 
 	if t.blockNo >= blockMax {
-		blockSize := 512
-		var err error
-		for k, v := range t.option {
-			if k == "blksize" {
-				blockSize, err = strconv.Atoi(v)
-				if err != nil {
-					return err
-				}
-			}
-		}
-		for i := range blockMax {
-			block := make([]byte, blockSize)
-			n, err := t.file.Read(block)
-			if n < blockSize {
-				t.blocks[i] = block[:n]
-				break
-			}
-			if err != nil {
-				return err
-			}
-			t.blocks[i] = block
-		}
+		t.reloadFile()
 		t.blockNo = 0
 	}
 
@@ -273,8 +232,8 @@ func newError(code byte) []byte {
 
 func (t *tftp) oack() ([]byte, error) {
 	head := []byte{0, opcOACK}
-	opt := []byte("blksize")
-	blksize := []byte(t.option["blksize"])
+	opt := []byte(optBlocksize)
+	blksize := []byte(t.option[optBlocksize])
 	r := append(head, opt...)
 	r = append(r, 0)
 	r = append(r, blksize...)
@@ -284,4 +243,55 @@ func (t *tftp) oack() ([]byte, error) {
 
 func (t *tftp) close() {
 	t.file.Close()
+}
+
+func (t *tftp) blockSize() (int, error) {
+	blockSize := 512
+	var err error
+	for k, v := range t.option {
+		if k == optBlocksize {
+			blockSize, err = strconv.Atoi(v)
+			if err != nil {
+				return 512, err
+			}
+		}
+	}
+	return blockSize, nil
+}
+
+func (t *tftp) loadFile() error {
+	if t.blocks == nil {
+		t.blocks = make([][]byte, blockMax)
+	}
+	blockSize, _ := t.blockSize()
+	for i := 1; i < blockMax; i++ {
+		block := make([]byte, blockSize)
+		n, err := t.file.Read(block)
+		if n < blockSize {
+			t.blocks[i] = block[:n]
+			break
+		}
+		if err != nil {
+			return err
+		}
+		t.blocks[i] = block
+	}
+	return nil
+}
+
+func (t *tftp) reloadFile() error {
+	blockSize, _ := t.blockSize()
+	for i := range blockMax {
+		block := make([]byte, blockSize)
+		n, err := t.file.Read(block)
+		if n < blockSize {
+			t.blocks[i] = block[:n]
+			break
+		}
+		if err != nil {
+			return err
+		}
+		t.blocks[i] = block
+	}
+	return nil
 }
