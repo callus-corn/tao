@@ -6,34 +6,35 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 )
 
 type testCase struct {
-	name      string
-	bytes     int
-	blockSize int
+	name   string
+	bytes  int
+	option map[string]string
 }
 
 const fname = "tmp.bin"
 
 func TestTFTP(t *testing.T) {
 	tests := []testCase{
-		{name: "0 byte file, blockSize 512", bytes: 0, blockSize: 512},
-		{name: "1 byte file, blockSize 512", bytes: 1, blockSize: 512},
-		{name: "10 byte file, blockSize 512", bytes: 10, blockSize: 512},
-		{name: "100 byte file, blockSize 512", bytes: 100, blockSize: 512},
-		{name: "1k byte file, blockSize 512", bytes: 1000, blockSize: 512},
-		{name: "10k byte file, blockSize 512", bytes: 10 * 1000, blockSize: 512},
-		{name: "100k byte file, blockSize 512", bytes: 100 * 1000, blockSize: 512},
-		{name: "1m byte file, blockSize 512", bytes: 1000 * 1000, blockSize: 512},
-		{name: "10m byte file, blockSize 512", bytes: 10 * 1000 * 1000, blockSize: 512},
-		{name: "511 byte file, blockSize 512", bytes: 511, blockSize: 512},
-		{name: "512 byte file, blockSize 512", bytes: 512, blockSize: 512},
-		{name: "513 byte file, blockSize 512", bytes: 513, blockSize: 512},
-		{name: "1023 byte file, blockSize 512", bytes: 1023, blockSize: 512},
-		{name: "1024 byte file, blockSize 512", bytes: 1024, blockSize: 512},
-		{name: "1025 byte file, blockSize 512", bytes: 1025, blockSize: 512},
+		{name: "0    byte file", bytes: 0, option: nil},
+		{name: "1    byte file", bytes: 1, option: nil},
+		{name: "10   byte file", bytes: 10, option: nil},
+		{name: "100  byte file", bytes: 100, option: nil},
+		{name: "1k   byte file", bytes: 1000, option: nil},
+		{name: "10k  byte file", bytes: 10 * 1000, option: nil},
+		{name: "100k byte file", bytes: 100 * 1000, option: nil},
+		{name: "1m   byte file", bytes: 1000 * 1000, option: nil},
+		{name: "10m  byte file", bytes: 10 * 1000 * 1000, option: nil},
+		{name: "512-1   byte file", bytes: 512 - 1, option: nil},
+		{name: "512     byte file", bytes: 512, option: nil},
+		{name: "512+1   byte file", bytes: 512 + 1, option: nil},
+		{name: "512*2-1 byte file", bytes: 512*2 - 1, option: nil},
+		{name: "512*2   byte file", bytes: 512 * 2, option: nil},
+		{name: "512*2+1 byte file", bytes: 512*2 + 1, option: nil},
 	}
 
 	for _, tc := range tests {
@@ -67,21 +68,36 @@ func TestTFTP(t *testing.T) {
 
 func TestBlksize(t *testing.T) {
 	tests := []testCase{
-		{name: "0 byte file, blockSize 1468", bytes: 0, blockSize: 1468},
-		{name: "1 byte file, blockSize 1468", bytes: 1, blockSize: 1468},
-		{name: "10 byte file, blockSize 1468", bytes: 10, blockSize: 1468},
-		{name: "100 byte file, blockSize 1468", bytes: 100, blockSize: 1468},
-		{name: "1k byte file, blockSize 1468", bytes: 1000, blockSize: 1468},
-		{name: "10k byte file, blockSize 1468", bytes: 10 * 1000, blockSize: 1468},
-		{name: "100k byte file, blockSize 1468", bytes: 100 * 1000, blockSize: 1468},
-		{name: "1m byte file, blockSize 1468", bytes: 1000 * 1000, blockSize: 1468},
-		{name: "10m byte file, blockSize 1468", bytes: 10 * 1000 * 1000, blockSize: 1468},
-		{name: "1467 byte file, blockSize 1468", bytes: 1467, blockSize: 1468},
-		{name: "1468 byte file, blockSize 1468", bytes: 1468, blockSize: 1468},
-		{name: "1469 byte file, blockSize 1468", bytes: 1469, blockSize: 1468},
-		{name: "1468*2-1 byte file, blockSize 1468", bytes: 1468*2 - 1, blockSize: 1468},
-		{name: "1468*2 byte file, blockSize 1468", bytes: 1468 * 2, blockSize: 1468},
-		{name: "1468*2+1 byte file, blockSize 1468", bytes: 1468*2 + 1, blockSize: 1468},
+		{name: "0 byte file, blockSize 1468", bytes: 0, option: map[string]string{"blksize": "1468"}},
+		{name: "1 byte file, blockSize 1468", bytes: 1, option: map[string]string{"blksize": "1468"}},
+		{name: "10 byte file, blockSize 1468", bytes: 10, option: map[string]string{"blksize": "1468"}},
+		{name: "100 byte file, blockSize 1468", bytes: 100, option: map[string]string{"blksize": "1468"}},
+		{name: "1k byte file, blockSize 1468", bytes: 1000, option: map[string]string{"blksize": "1468"}},
+		{name: "10k byte file, blockSize 1468", bytes: 10 * 1000, option: map[string]string{"blksize": "1468"}},
+		{name: "100k byte file, blockSize 1468", bytes: 100 * 1000, option: map[string]string{"blksize": "1468"}},
+		{name: "1m byte file, blockSize 1468", bytes: 1000 * 1000, option: map[string]string{"blksize": "1468"}},
+		{name: "10m byte file, blockSize 1468", bytes: 10 * 1000 * 1000, option: map[string]string{"blksize": "1468"}},
+		{name: "1468-1 byte file, blockSize 1468", bytes: 1468 - 1, option: map[string]string{"blksize": "1468"}},
+		{name: "1468 byte file, blockSize 1468", bytes: 1468, option: map[string]string{"blksize": "1468"}},
+		{name: "1468+1 byte file, blockSize 1468", bytes: 1468 + 1, option: map[string]string{"blksize": "1468"}},
+		{name: "1468*2-1 byte file, blockSize 1468", bytes: 1468*2 - 1, option: map[string]string{"blksize": "1468"}},
+		{name: "1468*2 byte file, blockSize 1468", bytes: 1468 * 2, option: map[string]string{"blksize": "1468"}},
+		{name: "1468*2+1 byte file, blockSize 1468", bytes: 1468*2 + 1, option: map[string]string{"blksize": "1468"}},
+		{name: "0 byte file, blockSize 8192", bytes: 0, option: map[string]string{"blksize": "8192"}},
+		{name: "1 byte file, blockSize 8192", bytes: 1, option: map[string]string{"blksize": "8192"}},
+		{name: "10 byte file, blockSize 8192", bytes: 10, option: map[string]string{"blksize": "8192"}},
+		{name: "100 byte file, blockSize 8192", bytes: 100, option: map[string]string{"blksize": "8192"}},
+		{name: "1k byte file, blockSize 8192", bytes: 1000, option: map[string]string{"blksize": "8192"}},
+		{name: "10k byte file, blockSize 8192", bytes: 10 * 1000, option: map[string]string{"blksize": "8192"}},
+		{name: "100k byte file, blockSize 8192", bytes: 100 * 1000, option: map[string]string{"blksize": "8192"}},
+		{name: "1m byte file, blockSize 8192", bytes: 1000 * 1000, option: map[string]string{"blksize": "8192"}},
+		{name: "10m byte file, blockSize 8192", bytes: 10 * 1000 * 1000, option: map[string]string{"blksize": "8192"}},
+		{name: "8192-1 byte file, blockSize 8192", bytes: 8192 - 1, option: map[string]string{"blksize": "8192"}},
+		{name: "8192 byte file, blockSize 8192", bytes: 8192, option: map[string]string{"blksize": "8192"}},
+		{name: "8192+1 byte file, blockSize 8192", bytes: 8192 + 1, option: map[string]string{"blksize": "8192"}},
+		{name: "8192*2-1 byte file, blockSize 8192", bytes: 8192*2 - 1, option: map[string]string{"blksize": "8192"}},
+		{name: "8192*2 byte file, blockSize 8192", bytes: 8192 * 2, option: map[string]string{"blksize": "8192"}},
+		{name: "8192*2+1 byte file, blockSize 8192", bytes: 8192*2 + 1, option: map[string]string{"blksize": "8192"}},
 	}
 
 	for _, tc := range tests {
@@ -114,17 +130,28 @@ func TestBlksize(t *testing.T) {
 }
 
 func getFile(tc testCase) ([]byte, error) {
-	blockSize := tc.blockSize
+	var err error
+	blockSize := 512
 
-	head := []byte{0, opRRQ}
-	option := append([]byte("blksize"), 0)
-	option = append(option, fmt.Append(nil, blockSize)...)
+	head := []byte{0, opcRRQ}
 	req := append(head, []byte(fname)...)
 	req = append(req, 0)
-	req = append(req, option...)
+	if tc.option != nil {
+		option := append([]byte("blksize"), 0)
+		option = append(option, fmt.Append(nil, tc.option["blksize"])...)
+		req = append(req, option...)
+		blockSize, err = strconv.Atoi(tc.option["blksize"])
+		if err != nil {
+			return nil, err
+		}
+	}
 	tftp, err := rrq(req)
 	if err != nil {
 		return nil, err
+	}
+
+	if tc.option != nil {
+		tftp.ack([]byte{0, opcACK, 0, 0})
 	}
 
 	var got []byte
@@ -139,7 +166,7 @@ func getFile(tc testCase) ([]byte, error) {
 		if len(block) < blockSize {
 			break
 		}
-		tftp.ack([]byte{0, opACK, byte(i >> 8), byte(i)})
+		tftp.ack([]byte{0, opcACK, byte(i >> 8), byte(i)})
 		i++
 	}
 

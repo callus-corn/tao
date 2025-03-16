@@ -18,11 +18,11 @@ type tftp struct {
 
 const udpMax = 65536
 const blockMax = 65536
-const opRRQ = 1
-const opDATA = 3
-const opACK = 4
-const opERROR = 5
-const opOACK = 6
+const opcRRQ = 1
+const opcDATA = 3
+const opcACK = 4
+const opcERROR = 5
+const opcOACK = 6
 const fileNotFound = 1
 const accessviolation = 2
 const illegalTFTPOperation = 4
@@ -160,7 +160,7 @@ func isRRQ(p []byte) error {
 	if len(p) < 2 {
 		return errors.New("invalid packet")
 	}
-	if p[1] != opRRQ {
+	if p[1] != opcRRQ {
 		return errors.New("opc is not RRQ")
 	}
 	return nil
@@ -218,7 +218,7 @@ func (t *tftp) ack(p []byte) error {
 	if len(p) < 4 {
 		return errors.New("invalid packet")
 	}
-	if p[1] != opACK {
+	if p[1] != opcACK {
 		return errors.New("opc is not ACK")
 	}
 
@@ -233,17 +233,17 @@ func (t *tftp) ack(p []byte) error {
 
 func (t *tftp) data() ([]byte, error) {
 	block := t.blocks[t.blockNo-1]
-	head := []byte{0, opDATA, byte(t.blockNo >> 8), byte(t.blockNo)}
+	head := []byte{0, opcDATA, byte(t.blockNo >> 8), byte(t.blockNo)}
 	data := append(head, block...)
 	return data, nil
 }
 
 func newError(code byte) []byte {
-	return []byte{0, opERROR, 0, code, 0}
+	return []byte{0, opcERROR, 0, code, 0}
 }
 
 func (t *tftp) oack() ([]byte, error) {
-	head := []byte{0, opOACK}
+	head := []byte{0, opcOACK}
 	opt := []byte("blksize")
 	blksize := []byte(t.option["blksize"])
 	r := append(head, opt...)
