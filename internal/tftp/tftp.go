@@ -6,11 +6,14 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 )
 
 type tftp struct {
 	blocks  [][]byte
 	blockNo int
+	option  map[string]string
 }
 
 const udpMax = 65536
@@ -19,9 +22,11 @@ const opRRQ = 1
 const opDATA = 3
 const opACK = 4
 const opERROR = 5
+const opOACK = 6
 const fileNotFound = 1
 const accessviolation = 2
 const illegalTFTPOperation = 4
+const requestHasBeenDeniend = 8
 
 var logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 var host string
@@ -82,6 +87,34 @@ func listen(conn net.PacketConn) {
 func handleTFTP(conn net.PacketConn, client net.Addr, tftp *tftp) {
 	defer conn.Close()
 
+	udpBuffer := make([]byte, udpMax)
+	if len(tftp.option) > 0 {
+		response, err := tftp.oack()
+		if err != nil {
+			logger.Error(err.Error(), "module", "TFTP")
+			response := newError(requestHasBeenDeniend)
+			conn.WriteTo(response, client)
+			return
+		}
+		conn.WriteTo(response, client)
+
+		for {
+			_, ackClient, err := conn.ReadFrom(udpBuffer)
+			if err != nil {
+				logger.Error(err.Error(), "module", "TFTP")
+				continue
+			}
+			if err = isClient(ackClient, client); err != nil {
+				continue
+			}
+			if err = tftp.ack(udpBuffer); err != nil {
+				logger.Error(err.Error(), "module", "TFTP")
+				continue
+			}
+			break
+		}
+	}
+
 	response, err := tftp.data()
 	if err != nil {
 		logger.Error(err.Error(), "module", "TFTP")
@@ -91,7 +124,6 @@ func handleTFTP(conn net.PacketConn, client net.Addr, tftp *tftp) {
 	}
 	conn.WriteTo(response, client)
 
-	udpBuffer := make([]byte, udpMax)
 	for {
 		_, ackClient, err := conn.ReadFrom(udpBuffer)
 		if err != nil {
@@ -135,20 +167,41 @@ func isRRQ(p []byte) error {
 }
 
 func rrq(p []byte) (*tftp, error) {
-	filename := bytes.Split(p[2:], []byte{0})[0]
-	path := srvDir + "/" + string(filename)
+	filename := string(bytes.Split(p[2:], []byte{0})[0])
+	path := srvDir + "/" + filename
 	fp, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 
-	blockLen := 512
+	option := make(map[string]string)
+	options := bytes.Split(p[2:], []byte{0})
+	for i := range options {
+		if strings.ToLower(string(options[i])) == "blksize" {
+			option["blksize"] = string(options[i+1])
+		}
+	}
+
+	blockNo := 1
+	if len(option) > 0 {
+		blockNo = 0
+	}
+
+	blockSize := 512
+	for k, v := range option {
+		if k == "blksize" {
+			blockSize, err = strconv.Atoi(v)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	blocks := make([][]byte, blockMax)
 	for i := range blockMax {
-		block := make([]byte, blockLen)
+		block := make([]byte, blockSize)
 		n, err := fp.Read(block)
-		if n < blockLen {
+		if n < blockSize {
 			blocks[i] = block[:n]
 			break
 		}
@@ -158,7 +211,7 @@ func rrq(p []byte) (*tftp, error) {
 		blocks[i] = block
 	}
 
-	return &tftp{blocks, 1}, nil
+	return &tftp{blocks, blockNo, option}, nil
 }
 
 func (t *tftp) ack(p []byte) error {
@@ -187,4 +240,15 @@ func (t *tftp) data() ([]byte, error) {
 
 func newError(code byte) []byte {
 	return []byte{0, opERROR, 0, code, 0}
+}
+
+func (t *tftp) oack() ([]byte, error) {
+	head := []byte{0, opOACK}
+	opt := []byte("blksize")
+	blksize := []byte(t.option["blksize"])
+	r := append(head, opt...)
+	r = append(r, 0)
+	r = append(r, blksize...)
+	r = append(r, 0)
+	return r, nil
 }
