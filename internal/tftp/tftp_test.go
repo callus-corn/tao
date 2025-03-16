@@ -66,7 +66,7 @@ func TestTFTP(t *testing.T) {
 func getFile(tc testCase) ([]byte, error) {
 	blockLen := tc.blockLen
 
-	head := []byte{0, opcRRQ}
+	head := []byte{0, opRRQ}
 	req := append(head, []byte(fname)...)
 	tftp, err := rrq(req)
 	if err != nil {
@@ -85,7 +85,7 @@ func getFile(tc testCase) ([]byte, error) {
 		if len(block) < blockLen {
 			break
 		}
-		tftp.ack([]byte{0, opcACK, byte(i >> 8), byte(i)})
+		tftp.ack([]byte{0, opACK, byte(i >> 8), byte(i)})
 		i++
 	}
 

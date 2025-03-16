@@ -15,10 +15,10 @@ type tftp struct {
 
 const udpMax = 65536
 const blockMax = 65536
-const opcRRQ = 1
-const opcDATA = 3
-const opcACK = 4
-const opcERROR = 5
+const opRRQ = 1
+const opDATA = 3
+const opACK = 4
+const opERROR = 5
 const fileNotFound = 1
 const accessviolation = 2
 const illegalTFTPOperation = 4
@@ -48,16 +48,16 @@ func listen(conn net.PacketConn) {
 
 	udpBuffer := make([]byte, udpMax)
 	for {
-		_, addr, err := conn.ReadFrom(udpBuffer)
+		_, client, err := conn.ReadFrom(udpBuffer)
 		if err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
 		}
-		logger.Info("TFTP connection start", "module", "TFTP", "address", addr.String())
+		logger.Info("TFTP connection start", "module", "TFTP", "address", client.String())
 
-		if err := checkRRQ(udpBuffer); err != nil {
-			logger.Error("Illegal TFTP operation form "+addr.String(), "module", "TFTP")
+		if err := isRRQ(udpBuffer); err != nil {
+			logger.Error("Illegal TFTP operation form "+client.String(), "module", "TFTP")
 			response := newError(illegalTFTPOperation)
-			conn.WriteTo(response, addr)
+			conn.WriteTo(response, client)
 			continue
 		}
 
@@ -65,7 +65,7 @@ func listen(conn net.PacketConn) {
 		if err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
 			response := newError(fileNotFound)
-			conn.WriteTo(response, addr)
+			conn.WriteTo(response, client)
 			continue
 		}
 
@@ -73,32 +73,32 @@ func listen(conn net.PacketConn) {
 		if err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
 		}
-		logger.Info("TFTP send file", "module", "TFTP", "address", addr.String())
+		logger.Info("TFTP send file", "module", "TFTP", "address", client.String())
 
-		go handleTFTP(conn, addr, tftp)
+		go handleTFTP(conn, client, tftp)
 	}
 }
 
-func handleTFTP(conn net.PacketConn, addr net.Addr, tftp *tftp) {
+func handleTFTP(conn net.PacketConn, client net.Addr, tftp *tftp) {
 	defer conn.Close()
 
 	response, err := tftp.data()
 	if err != nil {
 		logger.Error(err.Error(), "module", "TFTP")
 		response := newError(accessviolation)
-		conn.WriteTo(response, addr)
+		conn.WriteTo(response, client)
 		return
 	}
-	conn.WriteTo(response, addr)
+	conn.WriteTo(response, client)
 
 	udpBuffer := make([]byte, udpMax)
 	for {
-		_, ackAddr, err := conn.ReadFrom(udpBuffer)
+		_, ackClient, err := conn.ReadFrom(udpBuffer)
 		if err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
 			continue
 		}
-		if err = checkAddr(ackAddr, addr); err != nil {
+		if err = isClient(ackClient, client); err != nil {
 			continue
 		}
 		if err = tftp.ack(udpBuffer); err != nil {
@@ -110,25 +110,25 @@ func handleTFTP(conn net.PacketConn, addr net.Addr, tftp *tftp) {
 		if err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
 			response := newError(accessviolation)
-			conn.WriteTo(response, addr)
+			conn.WriteTo(response, client)
 			return
 		}
-		conn.WriteTo(response, addr)
+		conn.WriteTo(response, client)
 	}
 }
 
-func checkAddr(a net.Addr, b net.Addr) error {
+func isClient(a net.Addr, b net.Addr) error {
 	if a.String() != b.String() {
 		return errors.New("invalid client")
 	}
 	return nil
 }
 
-func checkRRQ(p []byte) error {
+func isRRQ(p []byte) error {
 	if len(p) < 2 {
 		return errors.New("invalid packet")
 	}
-	if p[1] != opcRRQ {
+	if p[1] != opRRQ {
 		return errors.New("opc is not RRQ")
 	}
 	return nil
@@ -165,8 +165,8 @@ func (t *tftp) ack(p []byte) error {
 	if len(p) < 4 {
 		return errors.New("invalid packet")
 	}
-	if p[1] != opcACK {
-		return errors.New("opc is not RRQ")
+	if p[1] != opACK {
+		return errors.New("opc is not ACK")
 	}
 
 	ack := (int(p[2]) << 8) + int(p[3])
@@ -180,11 +180,11 @@ func (t *tftp) ack(p []byte) error {
 
 func (t *tftp) data() ([]byte, error) {
 	block := t.blocks[t.blockNo-1]
-	head := []byte{0, opcDATA, byte(t.blockNo >> 8), byte(t.blockNo)}
+	head := []byte{0, opDATA, byte(t.blockNo >> 8), byte(t.blockNo)}
 	data := append(head, block...)
 	return data, nil
 }
 
 func newError(code byte) []byte {
-	return []byte{0, opcERROR, 0, code, 0}
+	return []byte{0, opERROR, 0, code, 0}
 }
