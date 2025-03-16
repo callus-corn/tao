@@ -29,6 +29,8 @@ func TestTFTP(t *testing.T) {
 		{name: "100k byte file", bytes: 100 * 1000, option: nil},
 		{name: "1m   byte file", bytes: 1000 * 1000, option: nil},
 		{name: "10m  byte file", bytes: 10 * 1000 * 1000, option: nil},
+		{name: "100m byte file", bytes: 100 * 1000 * 1000, option: nil},
+		{name: "1g   byte file", bytes: 1000 * 1000 * 1000, option: nil},
 		{name: "512-1   byte file", bytes: 512 - 1, option: nil},
 		{name: "512     byte file", bytes: 512, option: nil},
 		{name: "512+1   byte file", bytes: 512 + 1, option: nil},
@@ -60,7 +62,7 @@ func TestTFTP(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(wants, got) {
-				t.Fatalf("expected %v, got: %v", wants, got)
+				t.Fatal("Fail at " + tc.name)
 			}
 		}()
 	}
@@ -77,6 +79,8 @@ func TestBlksize(t *testing.T) {
 		{name: "100k byte file, blockSize 1468", bytes: 100 * 1000, option: map[string]string{"blksize": "1468"}},
 		{name: "1m byte file, blockSize 1468", bytes: 1000 * 1000, option: map[string]string{"blksize": "1468"}},
 		{name: "10m byte file, blockSize 1468", bytes: 10 * 1000 * 1000, option: map[string]string{"blksize": "1468"}},
+		{name: "100m byte file, blockSize 1468", bytes: 100 * 1000 * 1000, option: map[string]string{"blksize": "1468"}},
+		{name: "1g byte file, blockSize 1468", bytes: 1000 * 1000 * 1000, option: map[string]string{"blksize": "1468"}},
 		{name: "1468-1 byte file, blockSize 1468", bytes: 1468 - 1, option: map[string]string{"blksize": "1468"}},
 		{name: "1468 byte file, blockSize 1468", bytes: 1468, option: map[string]string{"blksize": "1468"}},
 		{name: "1468+1 byte file, blockSize 1468", bytes: 1468 + 1, option: map[string]string{"blksize": "1468"}},
@@ -92,6 +96,8 @@ func TestBlksize(t *testing.T) {
 		{name: "100k byte file, blockSize 8192", bytes: 100 * 1000, option: map[string]string{"blksize": "8192"}},
 		{name: "1m byte file, blockSize 8192", bytes: 1000 * 1000, option: map[string]string{"blksize": "8192"}},
 		{name: "10m byte file, blockSize 8192", bytes: 10 * 1000 * 1000, option: map[string]string{"blksize": "8192"}},
+		{name: "100m byte file, blockSize 8192", bytes: 100 * 1000 * 1000, option: map[string]string{"blksize": "8192"}},
+		{name: "1g byte file, blockSize 8192", bytes: 1000 * 1000 * 1000, option: map[string]string{"blksize": "8192"}},
 		{name: "8192-1 byte file, blockSize 8192", bytes: 8192 - 1, option: map[string]string{"blksize": "8192"}},
 		{name: "8192 byte file, blockSize 8192", bytes: 8192, option: map[string]string{"blksize": "8192"}},
 		{name: "8192+1 byte file, blockSize 8192", bytes: 8192 + 1, option: map[string]string{"blksize": "8192"}},
@@ -123,7 +129,7 @@ func TestBlksize(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(wants, got) {
-				t.Fatalf("expected %v, got: %v", wants, got)
+				t.Fatal("Fail at " + tc.name)
 			}
 		}()
 	}

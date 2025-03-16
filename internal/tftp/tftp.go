@@ -13,6 +13,7 @@ import (
 type tftp struct {
 	blocks  [][]byte
 	blockNo int
+	file    *os.File
 	option  map[string]string
 }
 
@@ -86,6 +87,7 @@ func listen(conn net.PacketConn) {
 
 func handleTFTP(conn net.PacketConn, client net.Addr, tftp *tftp) {
 	defer conn.Close()
+	defer tftp.close()
 
 	udpBuffer := make([]byte, udpMax)
 	if len(tftp.option) > 0 {
@@ -169,7 +171,7 @@ func isRRQ(p []byte) error {
 func rrq(p []byte) (*tftp, error) {
 	filename := string(bytes.Split(p[2:], []byte{0})[0])
 	path := srvDir + "/" + filename
-	fp, err := os.Open(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -198,9 +200,9 @@ func rrq(p []byte) (*tftp, error) {
 	}
 
 	blocks := make([][]byte, blockMax)
-	for i := range blockMax {
+	for i := 1; i < blockMax; i++ {
 		block := make([]byte, blockSize)
-		n, err := fp.Read(block)
+		n, err := file.Read(block)
 		if n < blockSize {
 			blocks[i] = block[:n]
 			break
@@ -211,7 +213,7 @@ func rrq(p []byte) (*tftp, error) {
 		blocks[i] = block
 	}
 
-	return &tftp{blocks, blockNo, option}, nil
+	return &tftp{blocks, blockNo, file, option}, nil
 }
 
 func (t *tftp) ack(p []byte) error {
@@ -228,11 +230,38 @@ func (t *tftp) ack(p []byte) error {
 	} else {
 		return errors.New("invalid ACK number")
 	}
+
+	if t.blockNo >= blockMax {
+		blockSize := 512
+		var err error
+		for k, v := range t.option {
+			if k == "blksize" {
+				blockSize, err = strconv.Atoi(v)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		for i := range blockMax {
+			block := make([]byte, blockSize)
+			n, err := t.file.Read(block)
+			if n < blockSize {
+				t.blocks[i] = block[:n]
+				break
+			}
+			if err != nil {
+				return err
+			}
+			t.blocks[i] = block
+		}
+		t.blockNo = 0
+	}
+
 	return nil
 }
 
 func (t *tftp) data() ([]byte, error) {
-	block := t.blocks[t.blockNo-1]
+	block := t.blocks[t.blockNo]
 	head := []byte{0, opcDATA, byte(t.blockNo >> 8), byte(t.blockNo)}
 	data := append(head, block...)
 	return data, nil
@@ -251,4 +280,8 @@ func (t *tftp) oack() ([]byte, error) {
 	r = append(r, blksize...)
 	r = append(r, 0)
 	return r, nil
+}
+
+func (t *tftp) close() {
+	t.file.Close()
 }
