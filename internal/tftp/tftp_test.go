@@ -4,7 +4,6 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strconv"
 	"testing"
 )
@@ -56,12 +55,19 @@ func TestTFTP(t *testing.T) {
 			}
 			defer os.Remove(path)
 
-			got, err := getFile(tc)
+			got := make([]byte, 0, tc.bytes)
+			n, err := getFile(tc, got)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(wants, got) {
+			got = got[:n]
+			if len(wants) != len(got) {
 				t.Fatal("Fail at " + tc.name)
+			}
+			for i, v := range wants {
+				if v != got[i] {
+					t.Fatal("Fail at " + tc.name)
+				}
 			}
 		}()
 	}
@@ -123,12 +129,19 @@ func TestBlksize(t *testing.T) {
 			}
 			defer os.Remove(path)
 
-			got, err := getFile(tc)
+			got := make([]byte, 0, tc.bytes)
+			n, err := getFile(tc, got)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(wants, got) {
+			got = got[:n]
+			if len(wants) != len(got) {
 				t.Fatal("Fail at " + tc.name)
+			}
+			for i, v := range wants {
+				if v != got[i] {
+					t.Fatal("Fail at " + tc.name)
+				}
 			}
 		}()
 	}
@@ -157,15 +170,15 @@ func TestInvalidBlksize(t *testing.T) {
 			}
 			defer os.Remove(path)
 
-			_, err = getFile(tc)
-			if err == nil {
-				t.Fatal(err)
+			got := make([]byte, 0, tc.bytes)
+			if _, err = getFile(tc, got); err == nil {
+				t.Fatal("Fail at " + tc.name)
 			}
 		}()
 	}
 }
 
-func getFile(tc testCase) ([]byte, error) {
+func getFile(tc testCase, got []byte) (int, error) {
 	var err error
 	blockSize := 512
 
@@ -181,33 +194,59 @@ func getFile(tc testCase) ([]byte, error) {
 		req = append(req, option...)
 		blockSize, err = strconv.Atoi(blksize)
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
 	}
 	tftp, err := rrq(req)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
 	if tc.option != nil {
 		tftp.ack([]byte{0, opcACK, 0, 0})
 	}
 
-	var got []byte
 	i := 1
+	rx := make([]byte, udpMax)
 	for {
-		block, err := tftp.data()
+		n, err := tftp.data(rx)
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
-		got = append(got, block[4:]...)
+		got = append(got, rx[4:n]...)
 
-		if len(block) < blockSize {
+		if n < blockSize {
 			break
 		}
 		tftp.ack([]byte{0, opcACK, byte(i >> 8), byte(i)})
 		i++
 	}
 
-	return got, nil
+	return len(got), nil
+}
+
+func Benchmark512(b *testing.B) {
+	tc := testCase{name: "bench 512", bytes: 1000 * 1000 * 1000, option: nil}
+	var data []byte
+	for range tc.bytes {
+		data = append(data, byte(rand.Int()))
+	}
+
+	func() {
+		dir := b.TempDir()
+		path := filepath.Join(dir, fname)
+		srvDir = dir
+
+		err := os.WriteFile(path, data, 0644)
+		if err != nil {
+			b.Fatal(err)
+		}
+		defer os.Remove(path)
+
+		got := make([]byte, 0, tc.bytes)
+		b.ResetTimer()
+		for range b.N {
+			getFile(tc, got)
+		}
+	}()
 }

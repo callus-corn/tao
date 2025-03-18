@@ -53,22 +53,22 @@ func Listen(address string) error {
 func listen(conn net.PacketConn) {
 	defer conn.Close()
 
-	udpBuffer := make([]byte, udpMax)
+	rx := make([]byte, udpMax)
 	for {
-		_, client, err := conn.ReadFrom(udpBuffer)
+		_, client, err := conn.ReadFrom(rx)
 		if err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
 		}
 		logger.Info("TFTP connection start", "module", "TFTP", "address", client.String())
 
-		if err := isRRQ(udpBuffer); err != nil {
+		if err := isRRQ(rx); err != nil {
 			logger.Error("Illegal TFTP operation form "+client.String(), "module", "TFTP")
 			response := newError(illegalTFTPOperation)
 			conn.WriteTo(response, client)
 			continue
 		}
 
-		tftp, err := rrq(udpBuffer)
+		tftp, err := rrq(rx)
 		if err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
 			response := newError(fileNotFound)
@@ -91,19 +91,21 @@ func handleTFTP(conn net.PacketConn, client net.Addr, tftp *tftp) {
 	defer conn.Close()
 	defer tftp.close()
 
-	udpBuffer := make([]byte, udpMax)
+	rx := make([]byte, udpMax)
+	tx := make([]byte, udpMax)
 	if len(tftp.option) > 0 {
-		response, err := tftp.oack()
+		n, err := tftp.oack(tx)
 		if err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
 			response := newError(requestHasBeenDeniend)
 			conn.WriteTo(response, client)
 			return
 		}
-		conn.WriteTo(response, client)
+		oack := tx[:n]
+		conn.WriteTo(oack, client)
 
 		for {
-			_, ackClient, err := conn.ReadFrom(udpBuffer)
+			_, ackClient, err := conn.ReadFrom(rx)
 			if err != nil {
 				logger.Error(err.Error(), "module", "TFTP")
 				continue
@@ -111,7 +113,7 @@ func handleTFTP(conn net.PacketConn, client net.Addr, tftp *tftp) {
 			if err = isClient(ackClient, client); err != nil {
 				continue
 			}
-			if err = tftp.ack(udpBuffer); err != nil {
+			if err = tftp.ack(rx); err != nil {
 				logger.Error(err.Error(), "module", "TFTP")
 				continue
 			}
@@ -119,17 +121,18 @@ func handleTFTP(conn net.PacketConn, client net.Addr, tftp *tftp) {
 		}
 	}
 
-	response, err := tftp.data()
+	n, err := tftp.data(tx)
 	if err != nil {
 		logger.Error(err.Error(), "module", "TFTP")
 		response := newError(accessviolation)
 		conn.WriteTo(response, client)
 		return
 	}
-	conn.WriteTo(response, client)
+	data := tx[:n]
+	conn.WriteTo(data, client)
 
 	for {
-		_, ackClient, err := conn.ReadFrom(udpBuffer)
+		_, ackClient, err := conn.ReadFrom(rx)
 		if err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
 			continue
@@ -137,19 +140,20 @@ func handleTFTP(conn net.PacketConn, client net.Addr, tftp *tftp) {
 		if err = isClient(ackClient, client); err != nil {
 			continue
 		}
-		if err = tftp.ack(udpBuffer); err != nil {
+		if err = tftp.ack(rx); err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
 			continue
 		}
 
-		response, err := tftp.data()
+		n, err := tftp.data(tx)
 		if err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
 			response := newError(accessviolation)
 			conn.WriteTo(response, client)
 			return
 		}
-		conn.WriteTo(response, client)
+		data := tx[:n]
+		conn.WriteTo(data, client)
 	}
 }
 
@@ -203,17 +207,22 @@ func (t *tftp) ack(p []byte) error {
 	return nil
 }
 
-func (t *tftp) data() ([]byte, error) {
+func (t *tftp) data(p []byte) (int, error) {
 	head := []byte{0, opcDATA, byte(t.blockNo >> 8), byte(t.blockNo)}
-	block := t.blocks[t.blockNo]
-	return append(head, block...), nil
+	for i := range len(head) {
+		p[i] = head[i]
+	}
+	for i := range len(t.blocks[t.blockNo]) {
+		p[len(head)+i] = t.blocks[t.blockNo][i]
+	}
+	return len(head) + len(t.blocks[t.blockNo]), nil
 }
 
 func newError(code byte) []byte {
 	return []byte{0, opcERROR, 0, code, 0}
 }
 
-func (t *tftp) oack() ([]byte, error) {
+func (t *tftp) oack(p []byte) (int, error) {
 	head := []byte{0, opcOACK}
 	options := []byte{}
 	for k, v := range t.option {
@@ -225,7 +234,13 @@ func (t *tftp) oack() ([]byte, error) {
 			options = append(options, 0)
 		}
 	}
-	return append(head, options...), nil
+	for i := range len(head) {
+		p[i] = head[i]
+	}
+	for i := range len(options) {
+		p[len(head)+i] = options[i]
+	}
+	return len(head) + len(options), nil
 }
 
 func isClient(a net.Addr, b net.Addr) error {
@@ -288,17 +303,17 @@ func (t *tftp) reloadFile() error {
 		return err
 	}
 
+	block := make([]byte, blockSize)
+	t.blocks[0] = block
 	for i := range len(t.blocks) {
-		block := make([]byte, blockSize)
-		n, err := t.file.Read(block)
+		n, err := t.file.Read(t.blocks[i])
 		if n < blockSize {
-			t.blocks[i] = block[:n]
+			t.blocks[i] = t.blocks[i][:n]
 			break
 		}
 		if err != nil {
 			return err
 		}
-		t.blocks[i] = block
 	}
 	return nil
 }
