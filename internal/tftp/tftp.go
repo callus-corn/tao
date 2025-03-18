@@ -174,15 +174,12 @@ func rrq(p []byte) (*tftp, error) {
 		option[strings.ToLower(string(options[i]))] = string(options[i+1])
 	}
 
-	blocks := make([][]byte, blockMax)
+	blocks := make([][]byte, 1)
 	blockNo := 1
 	if len(option) > 0 {
 		blockNo = 0
 	}
 	tftp := &tftp{blocks, blockNo, file, option}
-	if err = tftp.loadFile(); err != nil {
-		return nil, err
-	}
 	return tftp, nil
 }
 
@@ -200,7 +197,6 @@ func (t *tftp) ack(p []byte) error {
 
 	t.blockNo = ack + 1
 	if t.blockNo >= blockMax {
-		t.reloadFile()
 		t.blockNo = 0
 	}
 
@@ -208,14 +204,15 @@ func (t *tftp) ack(p []byte) error {
 }
 
 func (t *tftp) data(p []byte) (int, error) {
+	t.loadFile()
 	head := []byte{0, opcDATA, byte(t.blockNo >> 8), byte(t.blockNo)}
 	for i := range len(head) {
 		p[i] = head[i]
 	}
-	for i := range len(t.blocks[t.blockNo]) {
-		p[len(head)+i] = t.blocks[t.blockNo][i]
+	for i := range len(t.blocks[0]) {
+		p[len(head)+i] = t.blocks[0][i]
 	}
-	return len(head) + len(t.blocks[t.blockNo]), nil
+	return len(head) + len(t.blocks[0]), nil
 }
 
 func newError(code byte) []byte {
@@ -282,30 +279,11 @@ func (t *tftp) loadFile() error {
 		return err
 	}
 
-	for i := 1; i < len(t.blocks); i++ {
-		block := make([]byte, blockSize)
-		n, err := t.file.Read(block)
-		if n < blockSize {
-			t.blocks[i] = block[:n]
-			break
-		}
-		if err != nil {
-			return err
-		}
-		t.blocks[i] = block
-	}
-	return nil
-}
-
-func (t *tftp) reloadFile() error {
-	blockSize, err := t.blockSize()
-	if err != nil {
-		return err
-	}
-
-	block := make([]byte, blockSize)
-	t.blocks[0] = block
 	for i := range len(t.blocks) {
+		if t.blocks[i] == nil {
+			block := make([]byte, blockSize)
+			t.blocks[i] = block
+		}
 		n, err := t.file.Read(t.blocks[i])
 		if n < blockSize {
 			t.blocks[i] = t.blocks[i][:n]
