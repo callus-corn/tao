@@ -1,7 +1,6 @@
 package tftp
 
 import (
-	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -135,6 +134,37 @@ func TestBlksize(t *testing.T) {
 	}
 }
 
+func TestInvalidBlksize(t *testing.T) {
+	tests := []testCase{
+		{name: "10k byte file, blockSize ABC", bytes: 10 * 1000, option: map[string]string{"blksize": "ABC"}},
+	}
+
+	for _, tc := range tests {
+		println(tc.name)
+		var wants []byte
+		for range tc.bytes {
+			wants = append(wants, byte(rand.Int()))
+		}
+
+		func() {
+			dir := t.TempDir()
+			path := filepath.Join(dir, fname)
+			srvDir = dir
+
+			err := os.WriteFile(path, wants, 0644)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.Remove(path)
+
+			_, err = getFile(tc)
+			if err == nil {
+				t.Fatal(err)
+			}
+		}()
+	}
+}
+
 func getFile(tc testCase) ([]byte, error) {
 	var err error
 	blockSize := 512
@@ -142,11 +172,14 @@ func getFile(tc testCase) ([]byte, error) {
 	head := []byte{0, opcRRQ}
 	req := append(head, []byte(fname)...)
 	req = append(req, 0)
-	if tc.option != nil {
-		option := append([]byte("blksize"), 0)
-		option = append(option, fmt.Append(nil, tc.option["blksize"])...)
+	req = append(req, []byte("octet")...)
+	req = append(req, 0)
+	if blksize, ok := tc.option[optBlocksize]; ok {
+		option := append([]byte(optBlocksize), 0)
+		option = append(option, []byte(blksize)...)
+		option = append(option, 0)
 		req = append(req, option...)
-		blockSize, err = strconv.Atoi(tc.option["blksize"])
+		blockSize, err = strconv.Atoi(blksize)
 		if err != nil {
 			return nil, err
 		}

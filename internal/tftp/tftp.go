@@ -75,12 +75,13 @@ func listen(conn net.PacketConn) {
 			conn.WriteTo(response, client)
 			continue
 		}
+		logger.Info("TFTP RRQ option", "module", "TFTP", "address", client.String(), "option", tftp.option)
 
 		conn, err := net.ListenPacket("udp", host+":0")
 		if err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
 		}
-		logger.Info("TFTP send file", "module", "TFTP", "address", client.String())
+		logger.Info("TFTP send file", "module", "TFTP", "address", client.String(), "filename", tftp.file.Name())
 
 		go handleTFTP(conn, client, tftp)
 	}
@@ -152,6 +153,81 @@ func handleTFTP(conn net.PacketConn, client net.Addr, tftp *tftp) {
 	}
 }
 
+func rrq(p []byte) (*tftp, error) {
+	filename := string(bytes.Split(p[2:], []byte{0})[0])
+	path := srvDir + "/" + filename
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+
+	option := make(map[string]string)
+	options := bytes.Split(p[2:], []byte{0})[2:]
+	for i := 0; i < len(options); i += 2 {
+		if len(options[i]) == 0 {
+			continue
+		}
+		option[strings.ToLower(string(options[i]))] = string(options[i+1])
+	}
+
+	blocks := make([][]byte, blockMax)
+	blockNo := 1
+	if len(option) > 0 {
+		blockNo = 0
+	}
+	tftp := &tftp{blocks, blockNo, file, option}
+	if err = tftp.loadFile(); err != nil {
+		return nil, err
+	}
+	return tftp, nil
+}
+
+func (t *tftp) ack(p []byte) error {
+	if len(p) < 4 {
+		return errors.New("invalid packet")
+	}
+	if p[1] != opcACK {
+		return errors.New("opc is not ACK")
+	}
+	ack := (int(p[2]) << 8) + int(p[3])
+	if ack != t.blockNo {
+		return errors.New("invalid ACK number")
+	}
+
+	t.blockNo = ack + 1
+	if t.blockNo >= blockMax {
+		t.reloadFile()
+		t.blockNo = 0
+	}
+
+	return nil
+}
+
+func (t *tftp) data() ([]byte, error) {
+	head := []byte{0, opcDATA, byte(t.blockNo >> 8), byte(t.blockNo)}
+	block := t.blocks[t.blockNo]
+	return append(head, block...), nil
+}
+
+func newError(code byte) []byte {
+	return []byte{0, opcERROR, 0, code, 0}
+}
+
+func (t *tftp) oack() ([]byte, error) {
+	head := []byte{0, opcOACK}
+	options := []byte{}
+	for k, v := range t.option {
+		switch k {
+		case optBlocksize:
+			options = append(options, []byte(k)...)
+			options = append(options, 0)
+			options = append(options, []byte(v)...)
+			options = append(options, 0)
+		}
+	}
+	return append(head, options...), nil
+}
+
 func isClient(a net.Addr, b net.Addr) error {
 	if a.String() != b.String() {
 		return errors.New("invalid client")
@@ -169,102 +245,29 @@ func isRRQ(p []byte) error {
 	return nil
 }
 
-func rrq(p []byte) (*tftp, error) {
-	filename := string(bytes.Split(p[2:], []byte{0})[0])
-	path := srvDir + "/" + filename
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-
-	option := make(map[string]string)
-	options := bytes.Split(p[2:], []byte{0})
-	for i := range options {
-		if strings.ToLower(string(options[i])) == optBlocksize {
-			option[optBlocksize] = string(options[i+1])
-		}
-	}
-
-	blocks := make([][]byte, blockMax)
-
-	blockNo := 1
-	if len(option) > 0 {
-		blockNo = 0
-	}
-
-	tftp := &tftp{blocks, blockNo, file, option}
-	tftp.loadFile()
-	return tftp, nil
-}
-
-func (t *tftp) ack(p []byte) error {
-	if len(p) < 4 {
-		return errors.New("invalid packet")
-	}
-	if p[1] != opcACK {
-		return errors.New("opc is not ACK")
-	}
-
-	ack := (int(p[2]) << 8) + int(p[3])
-	if ack != t.blockNo {
-		return errors.New("invalid ACK number")
-	}
-	t.blockNo = ack + 1
-
-	if t.blockNo >= blockMax {
-		t.reloadFile()
-		t.blockNo = 0
-	}
-
-	return nil
-}
-
-func (t *tftp) data() ([]byte, error) {
-	block := t.blocks[t.blockNo]
-	head := []byte{0, opcDATA, byte(t.blockNo >> 8), byte(t.blockNo)}
-	data := append(head, block...)
-	return data, nil
-}
-
-func newError(code byte) []byte {
-	return []byte{0, opcERROR, 0, code, 0}
-}
-
-func (t *tftp) oack() ([]byte, error) {
-	head := []byte{0, opcOACK}
-	opt := []byte(optBlocksize)
-	blksize := []byte(t.option[optBlocksize])
-	r := append(head, opt...)
-	r = append(r, 0)
-	r = append(r, blksize...)
-	r = append(r, 0)
-	return r, nil
-}
-
 func (t *tftp) close() {
 	t.file.Close()
 }
 
 func (t *tftp) blockSize() (int, error) {
 	blockSize := 512
-	var err error
-	for k, v := range t.option {
-		if k == optBlocksize {
-			blockSize, err = strconv.Atoi(v)
-			if err != nil {
-				return 512, err
-			}
+	if v, ok := t.option[optBlocksize]; ok {
+		var err error
+		blockSize, err = strconv.Atoi(v)
+		if err != nil {
+			return 0, err
 		}
 	}
 	return blockSize, nil
 }
 
 func (t *tftp) loadFile() error {
-	if t.blocks == nil {
-		t.blocks = make([][]byte, blockMax)
+	blockSize, err := t.blockSize()
+	if err != nil {
+		return err
 	}
-	blockSize, _ := t.blockSize()
-	for i := 1; i < blockMax; i++ {
+
+	for i := 1; i < len(t.blocks); i++ {
 		block := make([]byte, blockSize)
 		n, err := t.file.Read(block)
 		if n < blockSize {
@@ -280,8 +283,12 @@ func (t *tftp) loadFile() error {
 }
 
 func (t *tftp) reloadFile() error {
-	blockSize, _ := t.blockSize()
-	for i := range blockMax {
+	blockSize, err := t.blockSize()
+	if err != nil {
+		return err
+	}
+
+	for i := range len(t.blocks) {
 		block := make([]byte, blockSize)
 		n, err := t.file.Read(block)
 		if n < blockSize {
