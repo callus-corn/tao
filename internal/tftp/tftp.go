@@ -32,14 +32,15 @@ const optBlocksize = "blksize"
 
 var logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 var host string
-var srvDir = "/home/ubuntu"
+var srvDir = "./"
 
-func Listen(address string) error {
+func Listen(address string, dir string) error {
 	var err error = nil
 	host, _, err = net.SplitHostPort(address)
 	if err != nil {
 		return err
 	}
+	srvDir = dir
 
 	conn, err := net.ListenPacket("udp", address)
 	if err != nil {
