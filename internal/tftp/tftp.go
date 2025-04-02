@@ -10,6 +10,12 @@ import (
 	"strings"
 )
 
+type TFTPConfig struct {
+	IsEnable bool   `json:"IsEnable"`
+	Address  string `json:"Address"`
+	SrvDir   string `json:"SrvDir"`
+}
+
 type tftp struct {
 	blocks  [][]byte
 	blockNo int
@@ -34,13 +40,15 @@ var logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 var host string
 var srvDir = "./"
 
-func Listen(address string, dir string) error {
+func Listen(conf TFTPConfig) error {
+	address := conf.Address
+	srvDir = conf.SrvDir
+
 	var err error = nil
 	host, _, err = net.SplitHostPort(address)
 	if err != nil {
 		return err
 	}
-	srvDir = dir
 
 	conn, err := net.ListenPacket("udp", address)
 	if err != nil {
@@ -59,6 +67,7 @@ func listen(conn net.PacketConn) {
 		_, client, err := conn.ReadFrom(rx)
 		if err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
+			continue
 		}
 		logger.Info("TFTP connection start", "module", "TFTP", "address", client.String())
 
@@ -81,6 +90,7 @@ func listen(conn net.PacketConn) {
 		conn, err := net.ListenPacket("udp", host+":0")
 		if err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
+			continue
 		}
 		logger.Info("TFTP send file", "module", "TFTP", "address", client.String(), "filename", tftp.file.Name())
 

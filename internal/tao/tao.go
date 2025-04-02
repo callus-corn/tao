@@ -8,17 +8,13 @@ import (
 	"os"
 	"time"
 
-	tftp "github.com/callus-corn/tao/internal/tftp"
+	"github.com/callus-corn/tao/internal/dhcp"
+	"github.com/callus-corn/tao/internal/tftp"
 )
 
 type config struct {
-	TFTP tftpConfig `json:"TFTP"`
-}
-
-type tftpConfig struct {
-	IsEnable bool   `json:"IsEnable"`
-	Address  string `json:"Address"`
-	SrvDir   string `json:"SrvDir"`
+	TFTP tftp.TFTPConfig `json:"TFTP"`
+	DHCP dhcp.DHCPConfig `json:"DHCP"`
 }
 
 var logger *slog.Logger
@@ -32,11 +28,17 @@ func Main() {
 		os.Exit(1)
 	}
 
-	if err := tftp.Listen(conf.TFTP.Address, conf.TFTP.SrvDir); err != nil {
+	if err := tftp.Listen(conf.TFTP); err != nil {
 		logger.Error(err.Error(), "module", "TAO")
 		os.Exit(1)
 	}
 	logger.Info("TFTP is listening at "+conf.TFTP.Address+conf.TFTP.SrvDir, "module", "TAO")
+
+	if err := dhcp.Listen(conf.DHCP); err != nil {
+		logger.Error(err.Error(), "module", "TAO")
+		os.Exit(1)
+	}
+	logger.Info("DHCP is listening at "+conf.DHCP.Address, "module", "TAO")
 
 	for {
 		logger.Info("TAO start successfully", "module", "TAO")
