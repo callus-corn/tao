@@ -48,9 +48,16 @@ const ETHERNET = 1
 const ETHERNETHLEN = 6
 
 const Pad = 0
+const SubnetMask = 1
+const TimeOffset = 2
+const Router = 3
+const DomainServer = 6
+const MTUInterface = 26
+const BroadcastAddress = 28
 const AddressTime = 51
 const DHCPMsgType = 53
 const DHCPServerId = 54
+const ParameterList = 55
 const End = 255
 
 const DHCPDISCOVER = 1
@@ -138,26 +145,36 @@ func handleDHCP(p []byte) {
 }
 
 func (d *dhcp) offer(p []byte) (int, net.Conn, error) {
-	addressTime := make([]byte, 4)
-	binary.BigEndian.PutUint32(addressTime, 864000)
-	options := []option{
-		{
-			code:  DHCPMsgType,
-			len:   1,
-			value: []byte{DHCPOFFER},
-		},
-		{
-			code:  AddressTime,
-			len:   4,
-			value: addressTime,
-		},
-		{
-			code:  DHCPServerId,
-			len:   4,
-			value: []byte{10, 0, 1, 1},
-		},
+	msgType := option{
+		code:  DHCPMsgType,
+		len:   1,
+		value: []byte{DHCPOFFER},
 	}
-	offer := &dhcp{
+
+	t := make([]byte, 4)
+	binary.BigEndian.PutUint32(t, 864000)
+	addressTime := option{
+		code:  AddressTime,
+		len:   4,
+		value: t,
+	}
+
+	dhcpServerId := option{
+		code:  DHCPServerId,
+		len:   4,
+		value: []byte{10, 0, 1, 1},
+	}
+
+	l := d.parameterList()
+	o := options(l)
+
+	options := make([]option, 3+len(o))
+	options = append(options, msgType)
+	options = append(options, addressTime)
+	options = append(options, dhcpServerId)
+	options = append(options, o...)
+
+	n, err := dhcp{
 		op:      BOOTREPLY,
 		htype:   ETHERNET,
 		hlen:    ETHERNETHLEN,
@@ -173,9 +190,7 @@ func (d *dhcp) offer(p []byte) (int, net.Conn, error) {
 		sname:   [64]byte{0},
 		file:    [128]byte{0},
 		options: options,
-	}
-
-	n, err := offer.write(p)
+	}.write(p)
 	if err != nil {
 		return 0, nil, errors.New("failed to make DHCPOFFER")
 	}
@@ -189,26 +204,36 @@ func (d *dhcp) offer(p []byte) (int, net.Conn, error) {
 }
 
 func (d *dhcp) ack(p []byte) (int, net.Conn, error) {
-	addressTime := make([]byte, 4)
-	binary.BigEndian.PutUint32(addressTime, 864000)
-	options := []option{
-		{
-			code:  DHCPMsgType,
-			len:   1,
-			value: []byte{DHCPACK},
-		},
-		{
-			code:  AddressTime,
-			len:   4,
-			value: addressTime,
-		},
-		{
-			code:  DHCPServerId,
-			len:   4,
-			value: []byte{10, 0, 1, 1},
-		},
+	msgType := option{
+		code:  DHCPMsgType,
+		len:   1,
+		value: []byte{DHCPACK},
 	}
-	offer := &dhcp{
+
+	t := make([]byte, 4)
+	binary.BigEndian.PutUint32(t, 864000)
+	addressTime := option{
+		code:  AddressTime,
+		len:   4,
+		value: t,
+	}
+
+	dhcpServerId := option{
+		code:  DHCPServerId,
+		len:   4,
+		value: []byte{10, 0, 1, 1},
+	}
+
+	l := d.parameterList()
+	o := options(l)
+
+	options := make([]option, 3+len(o))
+	options = append(options, msgType)
+	options = append(options, addressTime)
+	options = append(options, dhcpServerId)
+	options = append(options, o...)
+
+	n, err := dhcp{
 		op:      BOOTREPLY,
 		htype:   ETHERNET,
 		hlen:    ETHERNETHLEN,
@@ -224,9 +249,7 @@ func (d *dhcp) ack(p []byte) (int, net.Conn, error) {
 		sname:   [64]byte{0},
 		file:    [128]byte{0},
 		options: options,
-	}
-
-	n, err := offer.write(p)
+	}.write(p)
 	if err != nil {
 		return 0, nil, errors.New("failed to make DHCPOFFER")
 	}
@@ -240,10 +263,31 @@ func (d *dhcp) ack(p []byte) (int, net.Conn, error) {
 }
 
 func newdhcp(p []byte) (*dhcp, error) {
-	options, err := dhcpOptions(p[236:])
-	if err != nil {
-		return nil, err
+	if [4]byte(p[236:240]) != [4]byte{99, 130, 83, 99} {
+		return nil, errors.New("DHCP options have not magic number")
 	}
+
+	options := make([]option, 0)
+	o := p[240:]
+	i := 0
+	for {
+		if o[i] == End {
+			break
+		}
+		if i >= len(o) {
+			return nil, errors.New("DHCP options have not end option")
+		}
+		if o[i] == Pad {
+			i++
+			continue
+		}
+		code := o[i]
+		len := o[i+1]
+		value := o[i+2 : i+2+int(len)]
+		options = append(options, option{code, len, value})
+		i += 2 + int(len)
+	}
+
 	return &dhcp{
 		op:      p[0],
 		htype:   p[1],
@@ -263,30 +307,50 @@ func newdhcp(p []byte) (*dhcp, error) {
 	}, nil
 }
 
-func dhcpOptions(p []byte) ([]option, error) {
-	if [4]byte(p[0:4]) != [4]byte{99, 130, 83, 99} {
-		return nil, errors.New("DHCP options have not magic number")
+func options(p []byte) []option {
+	options := make([]option, len(p))
+	for _, code := range p {
+		switch code {
+		case SubnetMask:
+			options = append(options, option{
+				code:  SubnetMask,
+				len:   4,
+				value: []byte{255, 0, 0, 0},
+			})
+		case TimeOffset:
+			options = append(options, option{
+				code:  TimeOffset,
+				len:   4,
+				value: []byte{0},
+			})
+		case Router:
+			options = append(options, option{
+				code:  Router,
+				len:   4,
+				value: []byte{10, 0, 0, 1},
+			})
+		case DomainServer:
+			options = append(options, option{
+				code:  DomainServer,
+				len:   4,
+				value: []byte{8, 8, 8, 8},
+			})
+		case MTUInterface:
+			options = append(options, option{
+				code:  MTUInterface,
+				len:   2,
+				value: []byte{5, 220},
+			})
+		case BroadcastAddress:
+			options = append(options, option{
+				code:  BroadcastAddress,
+				len:   4,
+				value: []byte{10, 255, 255, 255},
+			})
+		default:
+		}
 	}
-	options := make([]option, 0)
-	i := 4
-	for {
-		if i >= len(p) {
-			return nil, errors.New("DHCP options have not end option")
-		}
-		if p[i] == Pad {
-			i++
-			continue
-		}
-		if p[i] == End {
-			break
-		}
-		code := p[i]
-		len := p[i+1]
-		value := p[i+2 : i+2+int(len)]
-		options = append(options, option{code, len, value})
-		i += 2 + int(len)
-	}
-	return options, nil
+	return options
 }
 
 func (d dhcp) msgType() byte {
@@ -296,6 +360,18 @@ func (d dhcp) msgType() byte {
 			continue
 		}
 		t = option.value[0]
+		break
+	}
+	return t
+}
+
+func (d dhcp) parameterList() []byte {
+	var t []byte
+	for _, option := range d.options {
+		if option.code != ParameterList {
+			continue
+		}
+		t = option.value
 		break
 	}
 	return t
