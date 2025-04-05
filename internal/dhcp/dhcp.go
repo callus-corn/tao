@@ -168,10 +168,8 @@ func (d *dhcp) offer(p []byte) (int, net.Conn, error) {
 	l := d.parameterList()
 	o := options(l)
 
-	options := make([]option, 3+len(o))
-	options = append(options, msgType)
-	options = append(options, addressTime)
-	options = append(options, dhcpServerId)
+	options := make([]option, 0, 3+len(o))
+	options = append(options, msgType, addressTime, dhcpServerId)
 	options = append(options, o...)
 
 	n, err := dhcp{
@@ -227,10 +225,8 @@ func (d *dhcp) ack(p []byte) (int, net.Conn, error) {
 	l := d.parameterList()
 	o := options(l)
 
-	options := make([]option, 3+len(o))
-	options = append(options, msgType)
-	options = append(options, addressTime)
-	options = append(options, dhcpServerId)
+	options := make([]option, 0, 3+len(o))
+	options = append(options, msgType, addressTime, dhcpServerId)
 	options = append(options, o...)
 
 	n, err := dhcp{
@@ -309,44 +305,44 @@ func newdhcp(p []byte) (*dhcp, error) {
 
 func options(p []byte) []option {
 	options := make([]option, len(p))
-	for _, code := range p {
+	for i, code := range p {
 		switch code {
 		case SubnetMask:
-			options = append(options, option{
+			options[i] = option{
 				code:  SubnetMask,
 				len:   4,
 				value: []byte{255, 0, 0, 0},
-			})
+			}
 		case TimeOffset:
-			options = append(options, option{
+			options[i] = option{
 				code:  TimeOffset,
 				len:   4,
 				value: []byte{0},
-			})
+			}
 		case Router:
-			options = append(options, option{
+			options[i] = option{
 				code:  Router,
 				len:   4,
 				value: []byte{10, 0, 0, 1},
-			})
+			}
 		case DomainServer:
-			options = append(options, option{
+			options[i] = option{
 				code:  DomainServer,
 				len:   4,
 				value: []byte{8, 8, 8, 8},
-			})
+			}
 		case MTUInterface:
-			options = append(options, option{
+			options[i] = option{
 				code:  MTUInterface,
 				len:   2,
 				value: []byte{5, 220},
-			})
+			}
 		case BroadcastAddress:
-			options = append(options, option{
+			options[i] = option{
 				code:  BroadcastAddress,
 				len:   4,
 				value: []byte{10, 255, 255, 255},
-			})
+			}
 		default:
 		}
 	}
