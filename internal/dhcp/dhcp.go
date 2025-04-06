@@ -60,6 +60,16 @@ const DHCPServerId = 54
 const ParameterList = 55
 const End = 255
 
+// not support
+// const Hostname = 12
+// const DomanName = 15
+// const StaticRoute = 33
+// const NTPServers = 42
+// const DHCPCaptivePortal = 114
+// const DomainSearch = 119
+// const SIPServersDHCPOption = 120
+// const ClasslessStaticRouteOption = 121
+
 const DHCPDISCOVER = 1
 const DHCPOFFER = 2
 const DHCPREQUEST = 3

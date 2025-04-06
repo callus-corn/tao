@@ -9,12 +9,14 @@ import (
 	"time"
 
 	"github.com/callus-corn/tao/internal/dhcp"
+	"github.com/callus-corn/tao/internal/http"
 	"github.com/callus-corn/tao/internal/tftp"
 )
 
 type config struct {
 	TFTP tftp.TFTPConfig `json:"TFTP"`
 	DHCP dhcp.DHCPConfig `json:"DHCP"`
+	HTTP http.HTTPConfig `json:"HTTP"`
 }
 
 var logger *slog.Logger
@@ -39,6 +41,12 @@ func Main() {
 		os.Exit(1)
 	}
 	logger.Info("DHCP is listening at "+conf.DHCP.Address, "module", "TAO")
+
+	if err := http.Listen(conf.HTTP); err != nil {
+		logger.Error(err.Error(), "module", "TAO")
+		os.Exit(1)
+	}
+	logger.Info("HTTP is listening at "+conf.HTTP.Address+conf.HTTP.SrvDir, "module", "TAO")
 
 	for {
 		logger.Info("TAO start successfully", "module", "TAO")
