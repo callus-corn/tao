@@ -35,6 +35,7 @@ const accessviolation = 2
 const illegalTFTPOperation = 4
 const requestHasBeenDeniend = 8
 const optBlocksize = "blksize"
+const optTransfersize = "tsize"
 
 var logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 var host string
@@ -71,6 +72,11 @@ func listen(conn net.PacketConn) {
 		}
 		logger.Info("TFTP connection start", "module", "TFTP", "address", client.String())
 
+		if err := isERROR(rx); err != nil {
+			logger.Error(err.Error(), "module", "TFTP")
+			continue
+		}
+
 		if err := isRRQ(rx); err != nil {
 			logger.Error("Illegal TFTP operation form "+client.String(), "module", "TFTP")
 			response := newError(illegalTFTPOperation)
@@ -105,6 +111,7 @@ func handleTFTP(conn net.PacketConn, client net.Addr, tftp *tftp) {
 	rx := make([]byte, udpMax)
 	tx := make([]byte, udpMax)
 	if len(tftp.option) > 0 {
+		//if false {
 		n, err := tftp.oack(tx)
 		if err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
@@ -123,6 +130,10 @@ func handleTFTP(conn net.PacketConn, client net.Addr, tftp *tftp) {
 			}
 			if err = isClient(ackClient, client); err != nil {
 				continue
+			}
+			if err := isERROR(rx); err != nil {
+				logger.Error(err.Error(), "module", "TFTP")
+				return
 			}
 			if err = tftp.ack(rx); err != nil {
 				logger.Error(err.Error(), "module", "TFTP")
@@ -150,6 +161,10 @@ func handleTFTP(conn net.PacketConn, client net.Addr, tftp *tftp) {
 		}
 		if err = isClient(ackClient, client); err != nil {
 			continue
+		}
+		if err := isERROR(rx); err != nil {
+			logger.Error(err.Error(), "module", "TFTP")
+			return
 		}
 		if err = tftp.ack(rx); err != nil {
 			logger.Error(err.Error(), "module", "TFTP")
@@ -240,6 +255,16 @@ func (t *tftp) oack(p []byte) (int, error) {
 			options = append(options, 0)
 			options = append(options, []byte(v)...)
 			options = append(options, 0)
+		case optTransfersize:
+			info, err := t.file.Stat()
+			if err != nil {
+				return 0, err
+			}
+			tsize := strconv.Itoa(int(info.Size()))
+			options = append(options, []byte(k)...)
+			options = append(options, 0)
+			options = append(options, tsize...)
+			options = append(options, 0)
 		}
 	}
 	for i := range len(head) {
@@ -254,6 +279,16 @@ func (t *tftp) oack(p []byte) (int, error) {
 func isClient(a net.Addr, b net.Addr) error {
 	if a.String() != b.String() {
 		return errors.New("invalid client")
+	}
+	return nil
+}
+
+func isERROR(p []byte) error {
+	if len(p) < 2 {
+		return errors.New("invalid packet")
+	}
+	if p[1] == opcERROR {
+		return errors.New("error code " + string(p[3]) + " " + string(bytes.Split(p[4:], []byte{0})[0]))
 	}
 	return nil
 }

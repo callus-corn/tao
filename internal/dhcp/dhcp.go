@@ -40,7 +40,7 @@ type option struct {
 }
 
 const udpMax = 65536
-const leastMessageLen = 312
+const leastMessageLen = 300
 
 const BOOTREQUEST = 1
 const BOOTREPLY = 2
@@ -49,7 +49,6 @@ const ETHERNETHLEN = 6
 
 const Pad = 0
 const SubnetMask = 1
-const TimeOffset = 2
 const Router = 3
 const DomainServer = 6
 const MTUInterface = 26
@@ -61,14 +60,39 @@ const ParameterList = 55
 const End = 255
 
 // not support
+// const TimeOffset = 2
+// const TimeServer = 4
+// const NameServer = 5
 // const Hostname = 12
+// const BootFileSize = 13
 // const DomanName = 15
+// const RootPath = 17
+// const ExtensionFile = 18
+// const MaxDGAssembly = 22
+// const DefaultIPTTL = 23
 // const StaticRoute = 33
+// const NISDomain = 40
+// const NISServers = 41
 // const NTPServers = 42
+// const VendorSpecific = 43
+// const AddressRequest = 50
+// const Overload = 52
+// const DHCPMaxMsgSize = 57
+// const RenewalTime = 58
+// const RebindingTime = 59
+// const ClassId = 60
+// const BootFileName = 67
+// const UUID = 97
 // const DHCPCaptivePortal = 114
 // const DomainSearch = 119
 // const SIPServersDHCPOption = 120
 // const ClasslessStaticRouteOption = 121
+
+// Sub options are not supported
+// const PXEDISCOVERYCONTROL = 6
+// const PXEBOOTSERVERS = 8
+// const PXEBOOTMENU = 9
+// const PXEBOOTITEM = 71
 
 const DHCPDISCOVER = 1
 const DHCPOFFER = 2
@@ -105,11 +129,11 @@ func listen(conn net.PacketConn) {
 			logger.Error(err.Error(), "module", "DHCP")
 			continue
 		}
-		go handleDHCP(slices.Clone(rx[:n]))
+		go handleDHCP(conn, slices.Clone(rx[:n]))
 	}
 }
 
-func handleDHCP(p []byte) {
+func handleDHCP(conn net.PacketConn, p []byte) {
 	dhcp, err := newdhcp(p)
 	if err != nil {
 		logger.Error(err.Error(), "module", "DHCP")
@@ -120,25 +144,33 @@ func handleDHCP(p []byte) {
 	case DHCPDISCOVER:
 		logger.Info("receve DHCPDISCOVER", "module", "DHCP", "message", fmt.Sprintf("%v", dhcp))
 		tx := make([]byte, udpMax)
-		n, conn, err := dhcp.offer(tx)
+		n, err := dhcp.offer(tx)
 		if err != nil {
 			logger.Error(err.Error(), "module", "DHCP")
 			return
 		}
-		defer conn.Close()
-		conn.Write(tx[:n])
+		addr, err := net.ResolveUDPAddr("udp", "255.255.255.255:68")
+		if err != nil {
+			logger.Error(err.Error(), "module", "DHCP")
+			return
+		}
+		conn.WriteTo(slices.Clone(tx[:n]), addr)
 	case DHCPOFFER:
 		logger.Info("receve DHCPOFFER", "module", "DHCP", "message", fmt.Sprintf("%v", dhcp))
 	case DHCPREQUEST:
 		logger.Info("receve DHCPREQUEST", "module", "DHCP", "message", fmt.Sprintf("%v", dhcp))
 		tx := make([]byte, udpMax)
-		n, conn, err := dhcp.ack(tx)
+		n, err := dhcp.ack(tx)
 		if err != nil {
 			logger.Error(err.Error(), "module", "DHCP")
 			return
 		}
-		defer conn.Close()
-		conn.Write(tx[:n])
+		addr, err := net.ResolveUDPAddr("udp", "255.255.255.255:68")
+		if err != nil {
+			logger.Error(err.Error(), "module", "DHCP")
+			return
+		}
+		conn.WriteTo(slices.Clone(tx[:n]), addr)
 	case DHCPDECLINE:
 		logger.Info("receve DHCPDECLINE", "module", "DHCP", "message", fmt.Sprintf("%v", dhcp))
 	case DHCPACK:
@@ -154,11 +186,17 @@ func handleDHCP(p []byte) {
 	}
 }
 
-func (d *dhcp) offer(p []byte) (int, net.Conn, error) {
+func (d *dhcp) offer(p []byte) (int, error) {
 	msgType := option{
 		code:  DHCPMsgType,
 		len:   1,
 		value: []byte{DHCPOFFER},
+	}
+
+	dhcpServerId := option{
+		code:  DHCPServerId,
+		len:   4,
+		value: []byte{10, 0, 1, 1},
 	}
 
 	t := make([]byte, 4)
@@ -169,26 +207,22 @@ func (d *dhcp) offer(p []byte) (int, net.Conn, error) {
 		value: t,
 	}
 
-	dhcpServerId := option{
-		code:  DHCPServerId,
-		len:   4,
-		value: []byte{10, 0, 1, 1},
-	}
-
-	l := d.parameterList()
-	o := options(l)
+	o := options(d.parameterList())
 
 	options := make([]option, 0, 3+len(o))
-	options = append(options, msgType, addressTime, dhcpServerId)
+	options = append(options, msgType, dhcpServerId, addressTime)
 	options = append(options, o...)
 
-	n, err := dhcp{
+	fname := [128]byte{0}
+	copy(fname[:], []byte("EFI/boot/bootx64.efi"))
+
+	return dhcp{
 		op:      BOOTREPLY,
 		htype:   ETHERNET,
 		hlen:    ETHERNETHLEN,
 		hops:    0,
 		xid:     d.xid,
-		secs:    [2]byte{0},
+		secs:    d.secs,
 		flags:   d.flags,
 		ciaddr:  [4]byte{0},
 		yiaddr:  [4]byte{10, 0, 1, 2},
@@ -196,22 +230,12 @@ func (d *dhcp) offer(p []byte) (int, net.Conn, error) {
 		giaddr:  d.giaddr,
 		chaddr:  d.chaddr,
 		sname:   [64]byte{0},
-		file:    [128]byte{0},
+		file:    fname,
 		options: options,
 	}.write(p)
-	if err != nil {
-		return 0, nil, errors.New("failed to make DHCPOFFER")
-	}
-
-	conn, err := net.Dial("udp", "255.255.255.255:68")
-	if err != nil {
-		return 0, nil, errors.New("failed to open connection")
-	}
-
-	return n, conn, nil
 }
 
-func (d *dhcp) ack(p []byte) (int, net.Conn, error) {
+func (d *dhcp) ack(p []byte) (int, error) {
 	msgType := option{
 		code:  DHCPMsgType,
 		len:   1,
@@ -232,14 +256,16 @@ func (d *dhcp) ack(p []byte) (int, net.Conn, error) {
 		value: []byte{10, 0, 1, 1},
 	}
 
-	l := d.parameterList()
-	o := options(l)
+	o := options(d.parameterList())
 
 	options := make([]option, 0, 3+len(o))
 	options = append(options, msgType, addressTime, dhcpServerId)
 	options = append(options, o...)
 
-	n, err := dhcp{
+	fname := [128]byte{0}
+	copy(fname[:], []byte("EFI/boot/bootx64.efi"))
+
+	return dhcp{
 		op:      BOOTREPLY,
 		htype:   ETHERNET,
 		hlen:    ETHERNETHLEN,
@@ -253,19 +279,9 @@ func (d *dhcp) ack(p []byte) (int, net.Conn, error) {
 		giaddr:  d.giaddr,
 		chaddr:  d.chaddr,
 		sname:   [64]byte{0},
-		file:    [128]byte{0},
+		file:    fname,
 		options: options,
 	}.write(p)
-	if err != nil {
-		return 0, nil, errors.New("failed to make DHCPOFFER")
-	}
-
-	conn, err := net.Dial("udp", "255.255.255.255:68")
-	if err != nil {
-		return 0, nil, errors.New("failed to open connection")
-	}
-
-	return n, conn, nil
 }
 
 func newdhcp(p []byte) (*dhcp, error) {
@@ -319,41 +335,34 @@ func options(p []byte) []option {
 		switch code {
 		case SubnetMask:
 			options[i] = option{
-				code:  SubnetMask,
+				code:  code,
 				len:   4,
 				value: []byte{255, 0, 0, 0},
 			}
-		case TimeOffset:
-			options[i] = option{
-				code:  TimeOffset,
-				len:   4,
-				value: []byte{0},
-			}
 		case Router:
 			options[i] = option{
-				code:  Router,
+				code:  code,
 				len:   4,
 				value: []byte{10, 0, 0, 1},
 			}
 		case DomainServer:
 			options[i] = option{
-				code:  DomainServer,
+				code:  code,
 				len:   4,
 				value: []byte{8, 8, 8, 8},
 			}
 		case MTUInterface:
 			options[i] = option{
-				code:  MTUInterface,
+				code:  code,
 				len:   2,
 				value: []byte{5, 220},
 			}
 		case BroadcastAddress:
 			options[i] = option{
-				code:  BroadcastAddress,
+				code:  code,
 				len:   4,
 				value: []byte{10, 255, 255, 255},
 			}
-		default:
 		}
 	}
 	return options
@@ -414,11 +423,12 @@ func (d dhcp) write(p []byte) (int, error) {
 		copy(p[n+2:n+2+int(option.len)], option.value)
 		n += 2 + int(option.len)
 	}
-	for n < leastMessageLen-1 {
+	p[n] = End
+	n++
+	for n < leastMessageLen {
 		p[n] = Pad
 		n++
 	}
-	p[n] = End
 
 	return n, nil
 }
