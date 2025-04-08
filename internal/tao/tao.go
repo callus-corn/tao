@@ -48,8 +48,9 @@ func Main() {
 	}
 	logger.Info("HTTP is listening at "+conf.HTTP.Address+conf.HTTP.SrvDir, "module", "TAO")
 
+	logger.Info("TAO start successfully", "module", "TAO")
+
 	for {
-		logger.Info("TAO start successfully", "module", "TAO")
 		time.Sleep(24 * time.Hour)
 	}
 }
