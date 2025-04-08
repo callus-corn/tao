@@ -26,7 +26,7 @@ func Listen(c HTTPConfig) error {
 
 func listen() {
 	http.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logger.Info("HTTP connection start from "+r.RemoteAddr, "module", "HTTP")
+		logger.Info("HTTP connection start from "+r.RemoteAddr, "module", "HTTP", "file", r.URL.Path)
 		upath := r.URL.Path
 		if !strings.HasPrefix(upath, "/") {
 			upath = "/" + upath
