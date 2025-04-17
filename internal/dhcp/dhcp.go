@@ -9,12 +9,16 @@ import (
 	"net"
 	"os"
 	"slices"
+	"strconv"
 )
 
 type DHCPConfig struct {
-	IsEnable bool   `json:"IsEnable"`
-	Address  string `json:"Address"`
-	FileName string `json:"FileName"`
+	IsEnable      bool   `json:"IsEnable"`
+	Address       string `json:"Address"`
+	FileName      string `json:"FileName"`
+	RangeStart    string `json:"RangeStart"`
+	DefaultRouter string `json:"DefaultRouter"`
+	DNS           string `json:"DNS"`
 }
 
 type dhcp struct {
@@ -40,6 +44,8 @@ type option struct {
 	len   byte
 	value []byte
 }
+
+type leaseDB map[string]string
 
 const udpMax = 65536
 const leastMessageLen = 300
@@ -68,14 +74,33 @@ const DHCPREQUEST = 3
 const DHCPACK = 5
 
 var logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
-var address string
+
 var fname string
+var rangeStart string
+var defaultRouter string
+var dns string
+
+var db leaseDB
+var current byte
+var serverId [4]byte
 
 func Listen(conf DHCPConfig) error {
-	address = conf.Address
 	fname = conf.FileName
+	rangeStart = conf.RangeStart
+	defaultRouter = conf.DefaultRouter
+	dns = conf.DNS
 
-	conn, err := net.ListenPacket("udp", address)
+	db = make(leaseDB)
+	current = 0
+
+	dummy, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return err
+	}
+	defer dummy.Close()
+	copy(serverId[:], dummy.LocalAddr().(*net.UDPAddr).IP)
+
+	conn, err := net.ListenPacket("udp", conf.Address)
 	if err != nil {
 		return err
 	}
@@ -135,7 +160,6 @@ func handleDHCP(conn net.PacketConn, p []byte) {
 		return
 	}
 	conn.WriteTo(slices.Clone(tx), addr)
-
 }
 
 func (d *dhcp) offer(p []byte) (int, error) {
@@ -160,8 +184,14 @@ func (d *dhcp) reply(p []byte) (int, error) {
 		}
 	}
 
-	must := options([]byte{DHCPServerId, AddressTime})
-	o := options(d.parameterList())
+	must, err := options([]byte{DHCPServerId, AddressTime})
+	if err != nil {
+		return 0, err
+	}
+	o, err := options(d.parameterList())
+	if err != nil {
+		return 0, err
+	}
 
 	options := make([]option, 0, 1+len(must)+len(o))
 	options = append(options, msgType)
@@ -169,13 +199,16 @@ func (d *dhcp) reply(p []byte) (int, error) {
 	options = append(options, o...)
 
 	yiaddr := [4]byte{0}
-	yiaddr = [4]byte{10, 0, 1, 2}
+	pick, err := db.pick(d.chaddr)
+	if err != nil {
+		return 0, err
+	}
+	copy(yiaddr[:], pick[:])
 
 	siaddr := [4]byte{0}
-	siaddr = [4]byte{10, 0, 1, 1}
-
 	file := [128]byte{0}
 	if d.isPXE() {
+		copy(siaddr[:], serverId[:])
 		copy(file[:], []byte(fname))
 	}
 
@@ -243,39 +276,41 @@ func newdhcp(p []byte) (*dhcp, error) {
 	}, nil
 }
 
-func options(p []byte) []option {
+func options(p []byte) ([]option, error) {
 	options := make([]option, len(p))
 	for i, code := range p {
 		switch code {
 		case SubnetMask:
+			_, ipnet, err := net.ParseCIDR(rangeStart)
+			if err != nil {
+				return nil, err
+			}
 			options[i] = option{
 				code:  code,
 				len:   4,
-				value: []byte{255, 0, 0, 0},
+				value: ipnet.Mask,
 			}
 		case Router:
 			options[i] = option{
 				code:  code,
 				len:   4,
-				value: []byte{10, 0, 0, 1},
+				value: net.ParseIP(defaultRouter),
 			}
 		case DomainServer:
 			options[i] = option{
 				code:  code,
 				len:   4,
-				value: []byte{8, 8, 8, 8},
-			}
-		case MTUInterface:
-			options[i] = option{
-				code:  code,
-				len:   2,
-				value: []byte{5, 220},
+				value: net.ParseIP(dns),
 			}
 		case BroadcastAddress:
+			_, ipnet, err := net.ParseCIDR(rangeStart)
+			if err != nil {
+				return nil, err
+			}
 			options[i] = option{
 				code:  code,
 				len:   4,
-				value: []byte{10, 255, 255, 255},
+				value: []byte{ipnet.IP[0] | ipnet.Mask[0], ipnet.IP[1] | ipnet.Mask[1], ipnet.IP[2] | ipnet.Mask[2], ipnet.IP[3] | ipnet.Mask[3]},
 			}
 		case AddressTime:
 			t := make([]byte, 4)
@@ -289,11 +324,11 @@ func options(p []byte) []option {
 			options[i] = option{
 				code:  code,
 				len:   4,
-				value: []byte{10, 0, 1, 1},
+				value: serverId[:],
 			}
 		}
 	}
-	return options
+	return options, nil
 }
 
 func (d dhcp) msgType() byte {
@@ -372,4 +407,21 @@ func (d dhcp) write(p []byte) (int, error) {
 	}
 
 	return n, nil
+}
+
+func (d leaseDB) pick(haddr [16]byte) ([4]byte, error) {
+	addr, ok := d[string(haddr[:])]
+	if !ok {
+		iaddr, _, err := net.ParseCIDR(rangeStart)
+		if err != nil {
+			return [4]byte{}, err
+		}
+		iaddr[3] = iaddr[3] + current
+		current++
+		d[string(haddr[:])] = strconv.Itoa(int(iaddr[0])) + "." + strconv.Itoa(int(iaddr[1])) + "." + strconv.Itoa(int(iaddr[2])) + "." + strconv.Itoa(int(iaddr[3]))
+		addr = d[string(haddr[:])]
+	}
+	picked := [4]byte{}
+	copy(picked[:], net.ParseIP(addr))
+	return picked, nil
 }
