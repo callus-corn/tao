@@ -184,18 +184,27 @@ func (d *dhcp) reply(p []byte) (int, error) {
 		}
 	}
 
-	must, err := options([]byte{DHCPServerId, AddressTime})
-	if err != nil {
-		return 0, err
+	t := make([]byte, 4)
+	binary.BigEndian.PutUint32(t, 864000)
+	addressTime := option{
+		code:  AddressTime,
+		len:   4,
+		value: t,
 	}
+
+	dhcpServerId := option{
+		code:  DHCPServerId,
+		len:   4,
+		value: serverId[:],
+	}
+
 	o, err := options(d.parameterList())
 	if err != nil {
 		return 0, err
 	}
 
-	options := make([]option, 0, 1+len(must)+len(o))
-	options = append(options, msgType)
-	options = append(options, must...)
+	options := make([]option, 0, 3+len(o))
+	options = append(options, msgType, addressTime, dhcpServerId)
 	options = append(options, o...)
 
 	yiaddr := [4]byte{0}
@@ -294,13 +303,13 @@ func options(p []byte) ([]option, error) {
 			options[i] = option{
 				code:  code,
 				len:   4,
-				value: net.ParseIP(defaultRouter),
+				value: net.ParseIP(defaultRouter)[12:16],
 			}
 		case DomainServer:
 			options[i] = option{
 				code:  code,
 				len:   4,
-				value: net.ParseIP(dns),
+				value: net.ParseIP(dns)[12:16],
 			}
 		case BroadcastAddress:
 			_, ipnet, err := net.ParseCIDR(rangeStart)
@@ -310,21 +319,7 @@ func options(p []byte) ([]option, error) {
 			options[i] = option{
 				code:  code,
 				len:   4,
-				value: []byte{ipnet.IP[0] | ipnet.Mask[0], ipnet.IP[1] | ipnet.Mask[1], ipnet.IP[2] | ipnet.Mask[2], ipnet.IP[3] | ipnet.Mask[3]},
-			}
-		case AddressTime:
-			t := make([]byte, 4)
-			binary.BigEndian.PutUint32(t, 864000)
-			options[i] = option{
-				code:  code,
-				len:   4,
-				value: t,
-			}
-		case DHCPServerId:
-			options[i] = option{
-				code:  code,
-				len:   4,
-				value: serverId[:],
+				value: []byte{ipnet.IP[0] | ^ipnet.Mask[0], ipnet.IP[1] | ^ipnet.Mask[1], ipnet.IP[2] | ^ipnet.Mask[2], ipnet.IP[3] | ^ipnet.Mask[3]},
 			}
 		}
 	}
@@ -416,12 +411,13 @@ func (d leaseDB) pick(haddr [16]byte) ([4]byte, error) {
 		if err != nil {
 			return [4]byte{}, err
 		}
+		iaddr = iaddr[12:16]
 		iaddr[3] = iaddr[3] + current
 		current++
 		d[string(haddr[:])] = strconv.Itoa(int(iaddr[0])) + "." + strconv.Itoa(int(iaddr[1])) + "." + strconv.Itoa(int(iaddr[2])) + "." + strconv.Itoa(int(iaddr[3]))
 		addr = d[string(haddr[:])]
 	}
 	picked := [4]byte{}
-	copy(picked[:], net.ParseIP(addr))
+	copy(picked[:], net.ParseIP(addr)[12:16])
 	return picked, nil
 }
