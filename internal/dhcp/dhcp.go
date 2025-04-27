@@ -135,7 +135,13 @@ func handleDHCP(conn net.PacketConn, p []byte) {
 	switch dhcp.msgType() {
 	case DHCPDISCOVER:
 		logger.Info("receve DHCPDISCOVER", "module", "DHCP", "message", fmt.Sprintf("%v", dhcp))
-		n, err := dhcp.offer(tx)
+		offer, err := dhcp.offer()
+		if err != nil {
+			logger.Error(err.Error(), "module", "DHCP")
+			return
+		}
+		logger.Info("send DHCPOFFER", "module", "DHCP", "message", fmt.Sprintf("%v", offer))
+		n, err := offer.write(tx)
 		if err != nil {
 			logger.Error(err.Error(), "module", "DHCP")
 			return
@@ -143,7 +149,13 @@ func handleDHCP(conn net.PacketConn, p []byte) {
 		tx = tx[:n]
 	case DHCPREQUEST:
 		logger.Info("receve DHCPREQUEST", "module", "DHCP", "message", fmt.Sprintf("%v", dhcp))
-		n, err := dhcp.ack(tx)
+		ack, err := dhcp.ack()
+		if err != nil {
+			logger.Error(err.Error(), "module", "DHCP")
+			return
+		}
+		logger.Info("send DHCPACK", "module", "DHCP", "message", fmt.Sprintf("%v", ack))
+		n, err := ack.write(tx)
 		if err != nil {
 			logger.Error(err.Error(), "module", "DHCP")
 			return
@@ -162,15 +174,15 @@ func handleDHCP(conn net.PacketConn, p []byte) {
 	conn.WriteTo(slices.Clone(tx), addr)
 }
 
-func (d *dhcp) offer(p []byte) (int, error) {
-	return d.reply(p)
+func (d *dhcp) offer() (*dhcp, error) {
+	return d.reply()
 }
 
-func (d *dhcp) ack(p []byte) (int, error) {
-	return d.reply(p)
+func (d *dhcp) ack() (*dhcp, error) {
+	return d.reply()
 }
 
-func (d *dhcp) reply(p []byte) (int, error) {
+func (d *dhcp) reply() (*dhcp, error) {
 	msgType := option{
 		code:  DHCPMsgType,
 		len:   1,
@@ -200,7 +212,7 @@ func (d *dhcp) reply(p []byte) (int, error) {
 
 	o, err := options(d.parameterList())
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	options := make([]option, 0, 3+len(o))
@@ -210,7 +222,7 @@ func (d *dhcp) reply(p []byte) (int, error) {
 	yiaddr := [4]byte{0}
 	pick, err := db.pick(d.chaddr)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	copy(yiaddr[:], pick[:])
 
@@ -221,7 +233,7 @@ func (d *dhcp) reply(p []byte) (int, error) {
 		copy(file[:], []byte(fname))
 	}
 
-	return dhcp{
+	return &dhcp{
 		op:      BOOTREPLY,
 		htype:   ETHERNET,
 		hlen:    ETHERNETHLEN,
@@ -237,7 +249,7 @@ func (d *dhcp) reply(p []byte) (int, error) {
 		sname:   [64]byte{0},
 		file:    file,
 		options: options,
-	}.write(p)
+	}, nil
 }
 
 func newdhcp(p []byte) (*dhcp, error) {
@@ -287,6 +299,7 @@ func newdhcp(p []byte) (*dhcp, error) {
 
 func options(p []byte) ([]option, error) {
 	options := make([]option, len(p))
+	n := 0
 	for i, code := range p {
 		switch code {
 		case SubnetMask:
@@ -299,18 +312,21 @@ func options(p []byte) ([]option, error) {
 				len:   4,
 				value: ipnet.Mask,
 			}
+			n++
 		case Router:
 			options[i] = option{
 				code:  code,
 				len:   4,
 				value: net.ParseIP(defaultRouter)[12:16],
 			}
+			n++
 		case DomainServer:
 			options[i] = option{
 				code:  code,
 				len:   4,
 				value: net.ParseIP(dns)[12:16],
 			}
+			n++
 		case BroadcastAddress:
 			_, ipnet, err := net.ParseCIDR(rangeStart)
 			if err != nil {
@@ -321,9 +337,10 @@ func options(p []byte) ([]option, error) {
 				len:   4,
 				value: []byte{ipnet.IP[0] | ^ipnet.Mask[0], ipnet.IP[1] | ^ipnet.Mask[1], ipnet.IP[2] | ^ipnet.Mask[2], ipnet.IP[3] | ^ipnet.Mask[3]},
 			}
+			n++
 		}
 	}
-	return options, nil
+	return options[:n], nil
 }
 
 func (d dhcp) msgType() byte {
