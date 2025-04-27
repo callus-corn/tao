@@ -1,0 +1,11 @@
+[Unit]
+Description=Infrastructure automation tool
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/tao
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
