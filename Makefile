@@ -1,4 +1,4 @@
-.PHONY: build test clean
+.PHONY: build install test clean
 
 build:
 	mkdir -p build/
@@ -6,14 +6,11 @@ build:
 	mv cmd/tao/tao build/
 
 install: build/tao tao.conf systemd/tao.service
-	mkdir -p /var/tao/
-	mkdir -p /var/tao/srv/
+	mkdir -p /var/lib/tao/
 	mkdir -p /etc/tao/
-	chmod 755 /var/tao/
-	chmod 755 /var/tao/srv/
+	chmod 755 /var/lib/tao/
 	chmod 755 /etc/tao/
-	chown root:root /var/tao/
-	chown root:root /var/tao/srv/
+	chown root:root /var/lib/tao/
 	chown root:root /etc/tao/
 	cp tao.conf /etc/tao/tao.conf
 	cp build/tao /usr/bin/tao
